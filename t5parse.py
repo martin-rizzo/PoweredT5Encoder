@@ -1,3 +1,36 @@
+"""
+  File    : p5parse.py
+  Brief   : ???
+  Author  : Martin Rizzo | <martinrizzo@gmail.com>
+  Date    : May 1, 2024
+  Repo    : https://github.com/martin-rizzo/ComfyUI-PixArt
+  License : MIT
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                             Powered T5 Encoder
+       An enhanced T5 encoder with integrated weighted prompt support
+
+     Copyright (c) 2024 Martin Rizzo
+
+     Permission is hereby granted, free of charge, to any person obtaining
+     a copy of this software and associated documentation files (the
+     "Software"), to deal in the Software without restriction, including
+     without limitation the rights to use, copy, modify, merge, publish,
+     distribute, sublicense, and/or sell copies of the Software, and to
+     permit persons to whom the Software is furnished to do so, subject to
+     the following conditions:
+
+     The above copyright notice and this permission notice shall be
+     included in all copies or substantial portions of the Software.
+
+     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+     IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+     CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+     TORT OR OTHERWISE, ARISING FROM,OUT OF OR IN CONNECTION WITH THE
+     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+"""
 import argparse
 from src.t5 import T5Tokenizer
 
@@ -40,7 +73,7 @@ def test(tokenizer:T5Tokenizer):
         else:
             failed_cases.append((prompt, expected_output, actual_output))
 
-    print(f"TEST RESULTS\n============\n")
+    print("TEST RESULTS\n============\n")
     print("Passed Cases:")
     if not passed_cases:
         print("  None")
@@ -61,10 +94,14 @@ def test(tokenizer:T5Tokenizer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='??')
+    parser = argparse.ArgumentParser(
+        description='??',
+        add_help=False
+        )
     parser.add_argument('prompt', nargs='*', help='The text prompt. Can be a single parameter or multiple.')
+    parser.add_argument('-t', '--test', action='store_true', help='run tests for the parse_segments_weights function.')
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='show this help message and exit')
     parser.add_argument('--version',  action='version', version='%(prog)s 0.1')
-    parser.add_argument('--test', '-t', action='store_true', help='Run tests for the parse_segments_weights function.')
 
     args      = parser.parse_args()
     tokenizer = T5Tokenizer.from_pretrained(legacy=True)

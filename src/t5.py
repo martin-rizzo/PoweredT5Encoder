@@ -6,8 +6,8 @@
   Repo    : https://github.com/martin-rizzo/ComfyUI-PixArt
   License : MIT
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-                      PixArt Node Collection for ComfyUI
-             Nodes providing support for PixArt models in ComfyUI
+                             Powered T5 Encoder
+       An enhanced T5 encoder with integrated weighted prompt support
 
      Copyright (c) 2024 Martin Rizzo
 
@@ -239,36 +239,46 @@ class T5Tokenizer:
 
         The returned list has dimensions of [batch_size, seq_length].
         '''
-        output_batch = []
-        input_batch  = text if isinstance(text,list) else [text]
-        end_item     = (self.end_token, 1., 0) if include_word_ids else (self.end_token, 1.)
-        pad_item     = (self.pad_token, 1., 0) if include_word_ids else (self.pad_token, 1.)
-        if not padding:
-            padding_max_size = 0
+        output_batch     = []
+        input_batch      = text if isinstance(text,list) else [text]
+        end_item         = (self.end_token, 1., 0) if include_word_ids else (self.end_token, 1.)
+        pad_item         = (self.pad_token, 1., 0) if include_word_ids else (self.pad_token, 1.)
+        padding_max_size = 0 if not padding else padding_max_size
+        process_word_by_word = (include_word_ids == True)
 
         max_number_of_tokens = 0
         for text in input_batch:
             text = text.replace('\n', ' ')
             segments_weights = self.parse_segments_weights(text)
 
-            # recorrer segment por segmento agregando (token, weight)
+            # inicializar la lista de (token, weight)
+            # que sera rellenada con la tokenizacion de segments_weights
             tokens = []
-            for segment, weight in segments_weights:
-                words   = [word for word in segment.split() if word]
-                for word_idx, word in enumerate(words):
 
-                    # embeddings
-                    if word.startswith(self.embedding_tag):
-                        # TODO: procesar embeddings
-                        _ = self.get_embeddings(self, word)
-                        continue
+            #- process word by word -------------
+            if process_word_by_word:
+                segment_word0 = 1
+                for segment, weight in segments_weights:
+                    words = [word for word in segment.split() if word]
+                    for word_idx, word in enumerate(words):
+                        # # TODO: procesar embeddings?
+                        # if word.startswith(self.embedding_tag):
+                        #     _ = self.get_embeddings(self, word)
+                        #     continue
 
-                    # tokenize word
-                    word_tokens = self.tokenizer(word, add_special_tokens=False)["input_ids"]
-                    if include_word_ids:
-                        tokens.extend([ (token, weight, word_idx+1) for token in word_tokens ])
-                    else:
-                        tokens.extend([ (token, weight) for token in word_tokens ])
+                        # tokenize word
+                        word_tokens = self.tokenizer(word, add_special_tokens=False)['input_ids']
+                        if include_word_ids:
+                            tokens.extend([ (token, weight, segment_word0 + word_idx) for token in word_tokens ])
+                        else:
+                            tokens.extend([ (token, weight) for token in word_tokens ])
+                    segment_word0 += len(words)
+            #- process segment by segment -------
+            else:
+                for segment, weight in segments_weights:
+                    segment_tokens = self.tokenizer(segment, add_special_tokens=False)['input_ids']
+                    tokens.extend([ (token, weight) for token in segment_tokens ])
+            #------------------------------------
 
             # agregar el token de final
             tokens.append( end_item )
