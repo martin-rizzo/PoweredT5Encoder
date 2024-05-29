@@ -279,14 +279,15 @@ ensure_venv_is_active() {
     fi
 
     if [[ $? -eq 2 ]]; then
-        fatal_error \
-            "function ensure_venv_is_active() is unable to switch between virtual environments" \
-            "This is an internal error likely caused by a mistake in the code"
+        echox wait 'deactivating current environment'
+        deactivate
+        source "$venv/bin/activate"
+        echox check 'new virtual environment activated'
+    else
+        echox wait 'activating virtual environment'
+        source "$venv/bin/activate"
+        echox check 'virtual environment activated'
     fi
-
-    echox wait 'activating virtual environment'
-    source "$venv/bin/activate"
-    echox check 'virtual environment activated'
 }
 
 

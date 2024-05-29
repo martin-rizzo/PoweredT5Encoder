@@ -70,22 +70,21 @@ if [[ $ShowVersion == true ]]; then
     virtual_python "$VEnvDir" !pip install --upgrade pip >/dev/null
     virtual_python "$VEnvDir" !pip install -r "$ScriptDir/requirements.txt" >/dev/null
 
-    # get the version of the 't5tokenize.py' script
-    script_version=$(virtual_python "$VEnvDir" "$ScriptDir/t5tokenize.py" --version)
-    pip_version=$(virtual_python "$VEnvDir" !pip --version)
-
+    deactivate
     echo "venv-dir : $VEnvDir"
-    echo "python   : ./$CompatiblePython"
+    echo "python   : $(command -v "$CompatiblePython")"
     echo
-    echo "$($CompatiblePython --version)"
-    echo "${pip_version:0:10}"
-    # print the version of 'transformers' installed in the virtual environment
+    $CompatiblePython --version
+    virtual_python "$VEnvDir" !pip --version | cut -d ' ' -f 1,2
     virtual_python "$VEnvDir" !python -c "import transformers;  print('transformers' , transformers.__version__ )"
     virtual_python "$VEnvDir" !python -c "import sentencepiece; print('sentencepiece', sentencepiece.__version__)"
-    echo "$script_version"
+    virtual_python "$VEnvDir" "$ScriptDir/t5tokenize.py" --version
     echo
-    exit 0
 fi
+
+# exit without executing python if the user provided options
+# that were handled by this bash script
+[[ $ShowVersion == true || $Reinstall == true ]] && exit 0
 
 # run the Python script using the virtual environment
 virtual_python "$VEnvDir" "$ScriptDir/t5tokenize.py" "$@"
