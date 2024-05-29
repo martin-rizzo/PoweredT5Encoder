@@ -47,7 +47,7 @@ source "$ScriptDir/xtras/utils.sh"
 [[ $# -eq 1 && $1 == '--reinstall' ]] && Reinstall=true
 
 # configure the 'DistroName', 'PackageManager', 'CompatiblePython' variables
-autodetect_distro_vars
+autodetect_distro_vars --require-python310
 
 # ensure the python version in 'CompatiblePython' is installed on the system
 require_system_command "$CompatiblePython"

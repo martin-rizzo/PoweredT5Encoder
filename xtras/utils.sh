@@ -75,6 +75,7 @@ function echox() {
         ERROR) show=true; prefix="${CYAN}[${RED}ERROR${CYAN}]${DEFAULT_COLOR}: " ; suffix="${DEFAULT_COLOR}" ; shift ;;
         WARN ) show=true; prefix="${CYAN}[${YELLOW}WARNING${CYAN}]${DEFAULT_COLOR}: " ; suffix="${DEFAULT_COLOR}" ; shift ;;
         INFO ) show=true; prefix="${PADDING}${CYAN}\xE2\x93\x98  " ; suffix="${DEFAULT_COLOR}" ; shift ;;
+        TEXT ) show=true; prefix="     "; shift ;;
     esac
     if [[ $show == true ]]; then
         echo -e -n "$prefix"
@@ -87,7 +88,7 @@ function bug_report() {
     local bug_message=$1
     echo
     echox ERROR "$bug_message"
-    echox info  "This is likely caused by a bug in the code. Please report this issue to a developer so he or she can investigate and fix it."
+    echox INFO  "This is likely caused by a bug in the code. Please report this issue to a developer so he or she can investigate and fix it."
     echo
     exit 1
 }
@@ -104,8 +105,17 @@ function fatal_error() {
     exit 1
 }
 
+# Function that attempts to auto-detect the Linux distribution,
+# and assigns the appropriate package manager and Python command.
+# Usage: autodetect_distro_vars [--require-python310]
+# Arguments:
+#   --require-python310: optional argument to ensure Python 3.10 is available.
+#
 function autodetect_distro_vars() {
-    local python3 packman
+    local packagemanager python
+
+    # attempt to auto-detect the Linux distribution
+    # and assign the appropriate package manager and Python command
     if [[ -z $DistroName ]]; then
         if [[ -f /etc/os-release2 ]]; then
             DistroName=$(awk -F= '/^ID/{print $2}' /etc/os-release2)
@@ -115,28 +125,43 @@ function autodetect_distro_vars() {
     fi
     case "$DistroName" in
         fedora|rhel)
-            packman="dnf"
-            python3="python3.10"
-            ;;
-        ubuntu|debian)
-            packman="apt-get"
-            python3="python3"
+            packagemanager='dnf'
+            python='python3'
             ;;
         arch)
-            packman="pacman"
-            python3="python"
+            packagemanager='pacman'
+            python='python3'
             ;;
         *)
-            packman="yum"
-            python3="python"
+            packagemanager='apt-get'
+            python='python3'
             ;;
     esac
-    if [[ -z $PackageManager ]]; then
-        PackageManager=$packman
+
+    # if Python 3.10 is required, attempt to guide the user on how to install it
+    if [[ $1 == '--require-python310' && -z $CompatiblePython ]]; then
+        python='python3.10'
+        if ! command -v "$python" &> /dev/null; then
+            echox ERROR "The '$python' command is not available!"
+            echox INFO  "You can try to install '$python' using the following commands"
+            echox TEXT  "RHEL/FEDORA:"
+            echox TEXT  " > sudo dnf install python3.10"
+            echox TEXT  "UBUNTU:"
+            echox TEXT  " > sudo add-apt-repository ppa:deadsnakes/ppa"
+            echox TEXT  " > sudo apt-get install python3.10-full"
+            echox TEXT  "ARCH LINUX:"
+            echox TEXT  " > sudo pacman -S --needed base-devel"
+            echox TEXT  " > git clone https://aur.archlinux.org/python310.git"
+            echox TEXT  " > cd python310"
+            echox TEXT  " > makepkg -si"
+            echo
+            exit 1
+        fi
     fi
-    if [[ -z $CompatiblePython ]]; then
-        CompatiblePython=$python3
-    fi
+
+    # set global variables if they are not already set
+    [[ -z $PackageManager   ]] && PackageManager=$packagemanager
+    [[ -z $CompatiblePython ]] && CompatiblePython=$python
 }
 
 # Function that checks whether a given command is available in the system
@@ -148,9 +173,10 @@ function autodetect_distro_vars() {
 function require_system_command() {
     for cmd in "$@"; do
         if ! command -v "$cmd" &> /dev/null; then
-            echox ERROR "$cmd is not available!"
-            echox "   you can try to install '$cmd' using the following command:"
-            echox "   > sudo $PackageManager install $cmd\n"
+            echox ERROR "The '$cmd' command is not available!"
+            echox INFO  "You can try to install '$cmd' using the following command:"
+            echox TEXT  "> sudo $PackageManager install $cmd"
+            echo
             exit 1
         else
             echox check "$cmd is installed"
