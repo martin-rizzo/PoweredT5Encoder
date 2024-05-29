@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# File    : t5weights.sh
-# Brief   : Creates Python virtual environment and runs t5weights.py inside it.
+# File    : t5parse.sh
+# Brief   : Creates Python virtual environment and runs t5parse.py inside it.
 # Author  : Martin Rizzo | <martinrizzo@gmail.com>
 # Date    : May 1, 2024
 # Repo    : https://github.com/martin-rizzo/PoweredT5Encoder
@@ -40,7 +40,7 @@ ShowVersion=false
 Reinstall=false
 
 # import functions for auto-detection and virtual environment management
-source "$ScriptDir/utils.sh"
+source "$ScriptDir/xtras/utils.sh"
 
 # check if the user requests version or reinstall, and set the respective flags
 [[ $# -eq 1 && $1 == '--version'   ]] && ShowVersion=true
@@ -70,8 +70,8 @@ if [[ $ShowVersion == true ]]; then
     virtual_python "$VEnvDir" !pip install --upgrade pip >/dev/null
     virtual_python "$VEnvDir" !pip install -r "$ScriptDir/requirements.txt" >/dev/null
 
-    # get the version of the 't5weights.py' script
-    script_version=$(virtual_python "$VEnvDir" "$ScriptDir/t5weights.py" --version)
+    # get the version of the 't5parse.py' script
+    script_version=$(virtual_python "$VEnvDir" "$ScriptDir/t5parse.py" --version)
     pip_version=$(virtual_python "$VEnvDir" !pip --version)
 
     echo "venv-dir : $VEnvDir"
@@ -88,4 +88,4 @@ if [[ $ShowVersion == true ]]; then
 fi
 
 # run the Python script using the virtual environment
-virtual_python "$VEnvDir" "$ScriptDir/t5weights.py" "$@"
+virtual_python "$VEnvDir" "$ScriptDir/t5parse.py" "$@"

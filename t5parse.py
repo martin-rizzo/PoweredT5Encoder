@@ -1,5 +1,5 @@
 import argparse
-from t5 import T5Tokenizer
+from src.t5 import T5Tokenizer
 
 TEST_CASES = [
     ("Normal text",
