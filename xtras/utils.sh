@@ -335,3 +335,19 @@ virtual_python() {
     fi
 }
 
+virtual_version() {
+    local venv=$1
+    local import_code='' print_code=''
+
+    shift 1
+    for package in "$@"; do
+        import_code+="import $package; "
+        print_code+="print('$package', $package.__version__); "
+    done
+
+    $CompatiblePython --version
+    virtual_python  "$VEnvDir" !pip --version | cut -d ' ' -f 1,2
+    if [[ -n print_code ]]; then
+        virtual_python "$venv" !python -c "$import_code$print_code"
+    fi
+}
