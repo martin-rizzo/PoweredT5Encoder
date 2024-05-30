@@ -69,10 +69,13 @@ from typing import Optional, Union, Dict, List
 from safetensors import safe_open
 
 # Hugging Face Transformers
-# - https://huggingface.co/docs/transformers/index
-from transformers import                 \
-    T5Config        as HF_T5Config,      \
-    T5TokenizerFast as HF_T5Tokenizer,   \
+#  - https://huggingface.co/docs/transformers/index
+# Note:
+#  - T5Tokenizer has a transitive dependency on 'sentencepiece'
+#  - T5TokenizerFast has a transitive dependency on 'sentencepiece' and 'protobuf'
+from transformers import                   \
+    T5Config        as HF_T5Config,        \
+    T5TokenizerFast as HF_T5TokenizerFast, \
     T5EncoderModel  as HF_T5EncoderModel
 
 
@@ -182,9 +185,8 @@ class T5Tokenizer:
             _this_file_dir = os.path.dirname(os.path.realpath(__file__))
             tokenizer_dir = os.path.join(_this_file_dir, 't5data')
 
-        # TODO: utilizar T5TokenizerFast (?)
-        tokenizer = HF_T5Tokenizer.from_pretrained(tokenizer_dir,
-                                                   legacy=legacy)
+        tokenizer = HF_T5TokenizerFast.from_pretrained(tokenizer_dir,
+                                                       legacy=legacy)
         return T5Tokenizer(tokenizer,
                            max_length     = max_length,
                            embedding_dir  = None,
