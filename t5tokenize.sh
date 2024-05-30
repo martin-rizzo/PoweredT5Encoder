@@ -76,8 +76,9 @@ if [[ $ShowVersion == true ]]; then
     echo
     $CompatiblePython --version
     virtual_python "$VEnvDir" !pip --version | cut -d ' ' -f 1,2
-    virtual_python "$VEnvDir" !python -c "import transformers;  print('transformers' , transformers.__version__ )"
-    virtual_python "$VEnvDir" !python -c "import sentencepiece; print('sentencepiece', sentencepiece.__version__)"
+    virtual_python "$VEnvDir" !python -c "import transformers;    print('transformers' , transformers.__version__   )"
+    virtual_python "$VEnvDir" !python -c "import google.protobuf; print('protobuf'     , google.protobuf.__version__)"
+    virtual_python "$VEnvDir" !python -c "import sentencepiece;   print('sentencepiece', sentencepiece.__version__  )"
     virtual_python "$VEnvDir" "$ScriptDir/t5tokenize.py" --version
     echo
 fi
