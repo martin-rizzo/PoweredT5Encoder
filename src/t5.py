@@ -31,14 +31,31 @@
      SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
-DOCUMENTATION
-=============
+ File Summary
+ ============
+   T5Tokenizer
+    - from_pretrained(tokenizer_dir, max_length, embedding_dir...)
+    - parse_segments_weights(text)
+    - tokenize_with_weights(text, padding, padding_max_size, include_word_ids)
+    - get_vocab()
+    - untokenize(token_weight_pairs, return_word_weights)
 
- Loading a checkpoint reducing compute and memory as much as possible:
- - https://pytorch.org/tutorials/recipes/recipes/module_load_state_dict_tips.html
+   T5EncoderModel
+    - from_safetensors(path, model_class, max_length, frozen, device)
+    - encode( input_ids )
+    - encode_with_weights( batch_of_tokens_with_weights, return_attn_mask )
+    - freeze()
+    - unfreeze()
+    - load_state_dict(state_dict, strict=False)
+    - state_dict(..)
+    - to(..)
 
- T5v1.1: T5v1.1 is an improved version of T5 with some architectural tweaks:
- - https://huggingface.co/docs/transformers/en/model_doc/t5v1.1
+ Documentation
+ =============
+   Loading a checkpoint reducing compute and memory as much as possible:
+    - https://pytorch.org/tutorials/recipes/recipes/module_load_state_dict_tips.html
+   T5 V1.1 is an improved version of T5 with some architectural tweaks:
+    - https://huggingface.co/docs/transformers/en/model_doc/t5v1.1
 
 """
 import os
@@ -53,10 +70,10 @@ from safetensors import safe_open
 
 # Hugging Face Transformers
 # - https://huggingface.co/docs/transformers/index
-from transformers import               \
-    T5Config       as HF_T5Config,     \
-    T5Tokenizer    as HF_T5Tokenizer,  \
-    T5EncoderModel as HF_T5EncoderModel
+from transformers import                 \
+    T5Config        as HF_T5Config,      \
+    T5TokenizerFast as HF_T5Tokenizer,   \
+    T5EncoderModel  as HF_T5EncoderModel
 
 
 # Google T5 v1.1 models
@@ -154,14 +171,13 @@ class T5Tokenizer:
 
 
     @classmethod
-    def from_pretrained(cls,
-        tokenizer_dir : Optional[os.PathLike] = None,
-        max_length    : int                   = 300,  # pixart alpha=120 | sigma=300 #
-        embedding_dir : Optional[os.PathLike] = None,
-        embedding_key : str                   = 't5',
-        embedding_size: int                   = 4096,
-        legacy        : bool                  = None
+    def from_pretrained(
+            cls,
+            tokenizer_dir: Optional[os.PathLike] = None,
+            max_length   : int                   = 300,  # pixart alpha=120 | sigma=300 #
+            legacy       : bool                  = None
     ):
+
         if tokenizer_dir is None:
             _this_file_dir = os.path.dirname(os.path.realpath(__file__))
             tokenizer_dir = os.path.join(_this_file_dir, 't5data')
@@ -171,9 +187,9 @@ class T5Tokenizer:
                                                    legacy=legacy)
         return T5Tokenizer(tokenizer,
                            max_length     = max_length,
-                           embedding_dir  = embedding_dir,
-                           embedding_size = embedding_size,
-                           embedding_key  = embedding_key)
+                           embedding_dir  = None,
+                           embedding_size = 't5',
+                           embedding_key  = 4096)
 
 
     def parse_segments_weights(self, text):

@@ -1,6 +1,6 @@
 """
   File    : p5tokenize.py
-  Brief   : ???
+  Brief   : A command-line tool for testing the powered T5 tokenizer.
   Author  : Martin Rizzo | <martinrizzo@gmail.com>
   Date    : May 2, 2024
   Repo    : https://github.com/martin-rizzo/ComfyUI-PixArt
@@ -34,7 +34,37 @@ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 import argparse
 from src.t5 import T5Tokenizer
 
+
+TEST_CASES = [
+    ("Normal text",
+     "[(16612, '1.00', 1), (1499, '1.00', 2), (1, '1.00', 0)]"
+    ),
+    ("An (important) word",
+     "[(389, '1.00', 1), (359, '1.10', 2), (1448, '1.00', 3), (1, '1.00', 0)]"
+    ),
+    ("The (unnecessary)(parens)",
+     "[(37, '1.00', 1), (12592, '1.10', 2), (1893, '1.10', 2), (35, '1.10', 2), (7, '1.10', 2), (1, '1.00', 0)]"
+    ),
+    ("\[Escaped\] \(text\)",
+     "[(784, '1.00', 1), (427, '1.00', 1), (12002, '1.00', 1), (26, '1.00', 1), (908, '1.00', 1), (41, '1.00', 2), (6327, '1.00', 2), (61, '1.00', 2), (1, '1.00', 0)]"
+    ),
+    ("(A great (((house:1.2)) [on] a (hill:0.5) under an intense) (((sun))) \(score:8\).",
+     "[(71, '1.00', 1), (248, '1.00', 2), (629, '1.45', 3), (30, '1.00', 4), (3, '1.10', 5), (9, '1.10', 5), (9956, '0.55', 6), (365, '1.10', 7), (46, '1.10', 8), (6258, '1.10', 9), (1997, '1.33', 10), (41, '1.00', 11), (7, '1.00', 11), (9022, '1.00', 11), (10, '1.00', 11), (13520, '1.00', 11), (5, '1.00', 11), (1, '1.00', 0)]"
+    )
+]
+
+
 def convert_to_string(tokens_weights: list, weight_format: str = "{:.2f}") -> str:
+    """
+    Convert a list of token-weight pairs (and optional word IDs) to a string.
+
+    Args:
+        tokens_weights (list): List of tuples with tokens, weights, and optional word IDs.
+        weight_format  (str) : Format for weights (default is "{:.2f}").
+
+    Returns:
+        str: A string representation of the provided list.
+    """
     if not tokens_weights:
         return tokens_weights
     if len(tokens_weights[0]) == 3:
@@ -44,28 +74,79 @@ def convert_to_string(tokens_weights: list, weight_format: str = "{:.2f}") -> st
     return str(tokens_weights)
 
 
+def test(tokenizer:T5Tokenizer) -> bool:
+    """
+    Test the 'tokenize_with_weights' function using predefined test cases.
+    Prints a summary of test results, including details of passed and failed cases.
+
+    Args:
+        tokenizer (T5Tokenizer): The tokenizer to be tested.
+
+    Returns:
+        bool: True if all test cases pass, False otherwise.
+    """
+    passed_cases = []
+    failed_cases = []
+
+    for prompt, expected_output in TEST_CASES:
+        actual_output = tokenizer.tokenize_with_weights(prompt, include_word_ids=True)[0]
+        actual_output = convert_to_string( actual_output, weight_format="{:.2f}" )
+
+        if actual_output == expected_output:
+            passed_cases.append(prompt)
+        else:
+            failed_cases.append((prompt, expected_output, actual_output))
+
+    print("TEST RESULTS\n============")
+    print("\n Passed Cases:")
+    if not passed_cases:
+        print("  None")
+    else:
+        for prompt in passed_cases:
+            print(f'  - "{prompt}"')
+
+    print("\n Failed Cases:")
+    if not failed_cases:
+        print("  None")
+    else:
+        for prompt, expected, actual in failed_cases:
+            print(f'  - Prompt "{prompt}"')
+            print(f'    Expected: {expected}')
+            print(f'    Actual  : {actual}')
+
+    print(f"\nSummary: {len(passed_cases)} passed, {len(failed_cases)} failed")
+    return len(failed_cases) == 0
+
+
+#===========================================================================#
+#////////////////////////////////// MAIN ///////////////////////////////////#
+#===========================================================================#
+
 def main():
     parser = argparse.ArgumentParser(
-        description='??',
+        description='A command-line tool for testing the powered T5 tokenizer.',
         add_help=False
         )
     parser.add_argument('prompt', nargs='*', help='The text prompt. Can be a single parameter or multiple.')
-    parser.add_argument('-w', '--wordid', action='store_true', help='en cada token muestra el ID de la palabra a la que pertenece')
-    parser.add_argument('-t', '--test', action='store_true', help='run tests for the parse_segments_weights function.')
-    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='show this help message and exit')
+    parser.add_argument('-w', '--wordid', action='store_true', help='Display the word ID for each token.')
+    parser.add_argument('-t', '--test', action='store_true', help='Run tests for the tokenize_with_weights function.')
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')
     parser.add_argument('--version',  action='version', version='%(prog)s 0.1')
 
     args      = parser.parse_args()
     tokenizer = T5Tokenizer.from_pretrained(legacy=True)
 
-    prompt = ' '.join(args.prompt) if args.prompt else ''
-    tokens_weights = tokenizer.tokenize_with_weights(prompt,
-                                                     padding          = False,
-                                                     padding_max_size = 0,
-                                                     include_word_ids = args.wordid
-                                                     )[0]
-    tokens_weights = convert_to_string( tokens_weights )
-    print( tokens_weights )
+    if args.test:
+        test(tokenizer)
+    else:
+        prompt = ' '.join(args.prompt) if args.prompt else ''
+        tokens_weights = tokenizer.tokenize_with_weights(prompt,
+                                                        padding          = False,
+                                                        padding_max_size = 0,
+                                                        include_word_ids = args.wordid
+                                                        )[0]
+        tokens_weights = convert_to_string( tokens_weights )
+        print( tokens_weights )
 
 if __name__ == '__main__':
     main()
