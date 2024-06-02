@@ -75,7 +75,7 @@ if [[ $ShowVersion == true ]]; then
     echo "python   : $(command -v "$CompatiblePython")"
     echo
     virtual_version "$VEnvDir" transformers safetensors google.protobuf sentencepiece
-    virtual_python  "$VEnvDir" "$ScriptDir/t5tokenize.py" --version
+    virtual_python  "$VEnvDir" "$ScriptDir/t5parse.py" --version
     echo
 fi
 
