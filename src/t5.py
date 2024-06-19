@@ -381,7 +381,7 @@ class T5EncoderModel:
     def from_safetensors(self,
                          safetensors_path: Union[os.PathLike, list],
                          model_class     : str  = 'xxl',
-                         max_length      : int  = 120,  # alpha=120 / sigma=300 !!!
+                         max_length      : int  = 300,  # alpha=120 / sigma=300 !!!
                          frozen          : bool = True,
                          device          : str  = 'cpu'
                          ):
@@ -399,7 +399,7 @@ class T5EncoderModel:
             model = HF_T5EncoderModel(model_config)
 
         for filepath in safetensors_path:
-            print(f'Loading {filepath}')
+            print(f'Loading {filepath} in {str(device)}')
             state_dict = {}
             with safe_open(filepath, framework='pt', device=device) as f:
                 for key in f.keys():
