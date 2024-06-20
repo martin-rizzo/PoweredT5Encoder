@@ -18,4 +18,5 @@ __pycache__/
 #-----------------------------
 # User-specific files
 #
-README-PERSONAL.MD
+/t5xe.ini
+/README-PERSONAL.MD
