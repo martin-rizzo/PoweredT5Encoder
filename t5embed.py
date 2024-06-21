@@ -1,11 +1,46 @@
+"""
+  File    : p5embed.py
+  Brief   : Tool for testing T5 extended encoder embedding generation.
+  Author  : Martin Rizzo | <martinrizzo@gmail.com>
+  Date    : Jun 1, 2024
+  Repo    : https://github.com/martin-rizzo/T5ExtendedEncoder
+  License : MIT
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                              T5 Extended Encoder
+     Enhanced T5 encoder with weighted prompts and easy safetensors loading
+
+     Copyright (c) 2024 Martin Rizzo
+
+     Permission is hereby granted, free of charge, to any person obtaining
+     a copy of this software and associated documentation files (the
+     "Software"), to deal in the Software without restriction, including
+     without limitation the rights to use, copy, modify, merge, publish,
+     distribute, sublicense, and/or sell copies of the Software, and to
+     permit persons to whom the Software is furnished to do so, subject to
+     the following conditions:
+
+     The above copyright notice and this permission notice shall be
+     included in all copies or substantial portions of the Software.
+
+     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+     IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+     CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+     TORT OR OTHERWISE, ARISING FROM,OUT OF OR IN CONNECTION WITH THE
+     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+"""
 import os
 import sys
 import torch
+import json
+import struct
 import shutil
 import argparse
-from configparser import ConfigParser
+from configparser      import ConfigParser
 from safetensors.torch import save_file as save_safetensors
-from src.t5 import T5Tokenizer, T5EncoderModel
+from src.t5            import T5Tokenizer, T5EncoderModel
 
 SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH    = os.path.join(SCRIPT_DIR, 't5xe.ini')
@@ -34,10 +69,6 @@ def filter_files(filepaths, extension):
     extension = extension.lower()
     return [filepath for filepath in filepaths if filepath.lower().endswith(extension)]
 
-def change_extension(fullpath, new_extension):
-    """Return a new path string with the file extension changed."""
-    base, ext = os.path.splitext(fullpath)
-    return base + '.' + new_extension.lstrip('.')
 
 def get_unique_path(path: str) -> str:
     """Get a unique file path by adding incremental numbers if the file exists."""
@@ -54,18 +85,13 @@ def get_unique_path(path: str) -> str:
         counter += 1
 
 
-def metadata_from_config(config: ConfigParser) -> dict:
-    image_config = {}
-
-    for section in config.sections():
-        for key, value in config.items(section):
-            if value.startswith("'"):
-                value = value.strip("'")
-            elif value.startswith('"'):
-                value = value.strip('"')
-            image_config[f"{section}.{key}"] = value
-
-    return image_config
+def change_extension(path: str, new_extension: str, overwrite: bool = True) -> str:
+    """Return a new path string with the file extension changed."""
+    base, ext = os.path.splitext(path)
+    new_path  = base + '.' + new_extension.lstrip('.')
+    if not overwrite:
+        new_path = get_unique_path(new_path)
+    return new_path
 
 
 def get_config_section(section_name:str):
@@ -86,6 +112,103 @@ def get_config_section(section_name:str):
         fatal_error(f"The configuration file '{display_name}' no contiene la sección [t5]")
 
     return section, display_name
+
+
+#================================ METADATA =================================#
+
+def load_metadata_from_safetensors(filepath  : str,
+                                   size_limit: int = (65536 * 1024)
+                                   ) -> dict:
+    """
+    Load metadata from a SafeTensors file.
+
+    Args:
+        filepath   (str): Path to the SafeTensors file.
+        size_limit (int): Maximum allowed size for the header in bytes.
+                          Default is 64MB (65536 * 1024).
+    Returns:
+        dict: Dictionary containing the file's metadata.
+    Raises:
+        ValueError: If the file doesn't have a valid SafeTensors header.
+        IOError:    If there are issues opening or reading the file.
+    """
+    try:
+        with open(filepath, "rb") as file:
+
+            # read the header length (first 8 bytes)
+            header_length = struct.unpack('<Q', file.read(8))[0]
+            if header_length > size_limit:
+                raise ValueError(f"Header exceeds the size limit of {size_limit} bytes.")
+
+            # read and extract the metadata
+            header_data = file.read(header_length)
+            header = json.loads(header_data)
+            return header.get('__metadata__', {})
+
+    except (ValueError, json.JSONDecodeError):
+        filename = os.path.basename(filepath)
+        raise ValueError(f"The file '{filename}' does not have a valid safetensors header.")
+    except IOError:
+        filename = os.path.basename(filepath)
+        raise IOError(f"Error opening or reading the file '{filename}'.")
+
+
+def load_metadata_from_ini_file(ini_file: str
+                                ) -> dict:
+    """
+    Load configuration from an INI file and convert it to metadata format.
+
+    Args:
+        ini_file (str): Path to the INI file.
+
+    Returns:
+        dict: Dictionary containing the configuration as metadata.
+    Raises:
+        ValueError: If there is an issue with the INI file format.
+        IOError:    If there are issues opening or reading the file.
+    """
+    metadata = {}
+    config = ConfigParser()
+    config.read(ini_file)
+    for section in config.sections():
+        for key, value in config.items(section):
+            if value.startswith("'"):
+                value = value.strip("'")
+            elif value.startswith('"'):
+                value = value.strip('"')
+            metadata[f"{section}.{key}"] = value
+    return metadata
+
+
+def save_metadata_to_ini_file(filepath: str,
+                              metadata: dict
+                              ) -> None:
+    """
+    Saves metadata to an .INI file.
+
+    Args:
+        filepath  (str): The path to the .INI file where metadata will be saved.
+        metadata (dict): A dictionary containing metadata.
+                         Keys should be in the format "<section>.<key>".
+    Raises:
+        ValueError: If any key in metadata does not follow the "<section>.<key>" format.
+    """
+    config = ConfigParser()
+
+    # process each key in the metadata dictionary
+    for key, value in metadata.items():
+        try:
+            section, option = key.split('.', 1)
+        except ValueError:
+            print(f"Error: metadata key '{key}' does not follow the '<section>.<key>' format.")
+            return
+        if section not in config:
+            config[section] = {}
+        config[section][option] = value
+
+    # write the config to the .INI file
+    with open(filepath, 'w') as configfile:
+        config.write(configfile)
 
 
 #===========================================================================#
@@ -130,48 +253,87 @@ def embeds_from_prompts(prompts  : list,
 
 
 
-#============================== SUB-COMMANDS ===============================#
+#================================ COMMANDS =================================#
 
-def process_file(filepath : str,  # .ini file
-                 tokenizer: T5Tokenizer,
-                 encoder  : T5EncoderModel
-                 ):
+def generate_safetensors(ini_files: list[str] | str,
+                         tokenizer: T5Tokenizer,
+                         encoder  : T5EncoderModel,
+                         padding  : bool = False,
+                         overwrite: bool = False
+                         ) -> None:
+    """
+    Generate SafeTensors from INI files containing prompts.
 
-    image_config = ConfigParser()
-    image_config.read(filepath)
-    image_config = metadata_from_config(image_config)
+    Args:
+        ini_files (list[str] | str): Path(s) to INI file(s)
+        tokenizer  (T5Tokenizer): T5 tokenizer
+        encoder (T5EncoderModel): T5 encoder model
+        padding           (bool): Whether to pad the tokens
+        overwrite         (bool): Whether to overwrite existing output files
+    """
+    if isinstance(ini_files, str):
+        ini_files = [ini_files]
 
-    positive = image_config.get('prompt.positive', '')
-    negative = image_config.get('prompt.negative', '')
 
-    padding = False
-    tensors = {}
+    for ini_file in ini_files:
+        metadata = load_metadata_from_ini_file(ini_file)
+        positive = metadata.get('prompt.positive', '')
+        negative = metadata.get('prompt.negative', '')
 
-    if padding:
-        _tokens = tokenizer.tokenize_with_weights([positive,negative],
-                                                  padding=True,
-                                                  padding_max_size=300)
-        _embeds, _attn_mask = encoder.encode_with_weights(_tokens,
-                                                          return_attn_mask=True
-                                                          )
-        tensors['prompt.positive']           = _embeds[0]
-        tensors['prompt.positive_attn_mask'] = _attn_mask[0]
-        tensors['prompt.negative']           = _embeds[1]
-        tensors['prompt.negative_attn_mask'] = _attn_mask[1]
-    else:
-        _tokens = tokenizer.tokenize_with_weights([positive], padding=False)
-        tensors['prompt.positive'] = encoder.encode_with_weights(_tokens)
-        _tokens = tokenizer.tokenize_with_weights([negative], padding=False)
-        tensors['prompt.negative'] = encoder.encode_with_weights(_tokens)
+        if not positive and not negative:
+            print(f"El archivo {ini_files} fue skippeado porque no contiene ningun prompt")
+            continue
 
-    _, output_filename = os.path.split(filepath)
-    output_filename    = change_extension(output_filename, '.safetensors')
-    output_filename    = get_unique_path(output_filename)
-    print("## output_filename:", output_filename)
-    print("## prompt.positive:", tensors['prompt.positive'].shape)
-    print("## prompt.negative:", tensors['prompt.negative'].shape)
-    save_safetensors(tensors, output_filename, metadata=image_config)
+        tensors = {}
+        if padding:
+            tokens = tokenizer.tokenize_with_weights([positive,negative],
+                                                     padding=True,
+                                                     padding_max_size=300)
+            embeds, attn_mask = encoder.encode_with_weights(tokens,
+                                                            return_attn_mask=True
+                                                            )
+            tensors['prompt.positive']           = embeds[0]
+            tensors['prompt.positive_attn_mask'] = attn_mask[0]
+            tensors['prompt.negative']           = embeds[1]
+            tensors['prompt.negative_attn_mask'] = attn_mask[1]
+        else:
+            tokens = tokenizer.tokenize_with_weights([positive], padding=False)
+            tensors['prompt.positive'] = encoder.encode_with_weights(tokens)
+            tokens = tokenizer.tokenize_with_weights([negative], padding=False)
+            tensors['prompt.negative'] = encoder.encode_with_weights(tokens)
+
+        _, output_filename = os.path.split(ini_file)
+        output_filename    = change_extension(output_filename, '.safetensors', overwrite=overwrite)
+
+        print("## output_filename:", output_filename)
+        print("## prompt.positive:", tensors['prompt.positive'].shape)
+        print("## prompt.negative:", tensors['prompt.negative'].shape)
+        save_safetensors(tensors, output_filename, metadata=metadata)
+
+
+def recreate_inis_from_safetensors(safetensors_files: list[str] | str,
+                                   overwrite        : bool = False
+                                   ) -> None:
+    if isinstance(safetensors_files, str):
+        safetensors_files = [safetensors_files]
+
+    for safetensors_file in safetensors_files:
+
+        metadata = load_metadata_from_safetensors(safetensors_file)
+        _, ini_filename = os.path.split(safetensors_file)
+        ini_filename    = change_extension(ini_filename, '.ini', overwrite=overwrite)
+        save_metadata_to_ini_file(ini_filename, metadata=metadata)
+
+
+def check_safetensors(safetensors_files: list[str] | str
+                      ) -> None:
     return None
+
+
+def internal_test() -> None:
+    print("No implementado todavia")
+
+
 
 def test_file(filepath : str,  # .safetensors file
               tokenizer: T5Tokenizer,
@@ -318,56 +480,40 @@ def check_all_tensors(tokenizer: T5Tokenizer,
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Tool for testing the embedding generation of the powered T5 encoder.',
-        add_help=False
-    )
-    parser.add_argument('filepaths', nargs='*', help='Configuration files to generate the embed')
-    parser.add_argument('-t', '--test'        , action='store_true', help='Test the generated embed against the saved one')
-    parser.add_argument('-l', '--check-layers', action='store_true', help='Check if all tensors/layers are contributing to the output')
+        description = "Tool for testing T5 extended encoder embedding generation.",
+        add_help    = False
+        )
+    parser.add_argument('files'               , nargs='*'          , help="List of '.prompt.ini' or '.prompt.safetensors' files to process.")
+    parser.add_argument('-c', '--check'       , action='store_true', help="Validate '.prompt.safetensors' files by comparing embeddings.")
+    parser.add_argument('-i', '--recreate-ini', action='store_true', help="Recreate '.prompt.ini' from '.prompt.safetensors' files.")
+    parser.add_argument('-t', '--test'        , action='store_true', help="Run internal tests to verify T5 encoder and tokenizer functionality.")
     parser.add_argument('-h', '--help'        , action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')
     parser.add_argument('--version', action='version', version='%(prog)s 0.1')
 
-
-    # 1) test y archivos -> no se genera nada, se verifican los .safetensors
-    # 2) archivos -> deben ser .ini y se generan los .safetensors
-    # 3) test (sin archivos) -> se realiza un test interno (??)
-
     args = parser.parse_args()
 
-    if args.check_layers:
-        command = 'check-layers'
-    else:
-        command  = 'test'   if args.test      else 'process'
-        command += '-files' if args.filepaths else '-internal'
+    if args.test:
+        internal_test()
+        sys.exit(0)
 
-    if command == 'process-files':
-        ini_files = filter_files(args.filepaths, '.ini')
-        if not ini_files:
-            fatal_error('Debe suministrar al menos algún archivo .ini')
+    prompt_ini_files  = filter_files(args.files, 'prompt.ini')
+    safetensors_files = filter_files(args.files, 'prompt.safetensors')
 
-        tokenizer, encoder = initialize_encoder()
-        for ini_file in ini_files:
-            process_file(ini_file, tokenizer, encoder)
-
-    elif command == 'test-files':
-        safetensors_files = filter_files(args.filepaths, '.safetensors')
+    if args.check:
         if not safetensors_files:
-            fatal_error('Debe suministrar al menos algún archivo .safetensors')
+            fatal_error("No '*.prompt.safetensors' files provided for validation.")
+        check_safetensors(safetensors_files)
+        sys.exit(0)
 
-        tokenizer, encoder = initialize_encoder()
-        for safetensors_file in safetensors_files:
-            test_file(safetensors_file, tokenizer, encoder)
+    if args.recreate_ini:
+        if not safetensors_files:
+            fatal_error("No '*.prompt.safetensors' files provided to recreate the '*.prompt.ini'.")
+        recreate_inis_from_safetensors(safetensors_files)
+        sys.exit(0)
 
-    elif command == 'test-internal':
-        print("Automated testing is not supported yet")
-        sys.exit(1)
-
-    elif command == 'check-layers':
-        tokenizer, encoder = initialize_encoder()
-        check_all_tensors(tokenizer, encoder)
-
-    else:
-        parser.print_help()
+    if not prompt_ini_files:
+        fatal_error("No 'prompt.ini' files provided for safetensors generation.")
+    generate_safetensors(prompt_ini_files)
 
 
 if __name__ == '__main__':
