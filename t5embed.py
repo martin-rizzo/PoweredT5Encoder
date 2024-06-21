@@ -38,13 +38,12 @@ import json
 import struct
 import shutil
 import argparse
+from glob              import glob
 from configparser      import ConfigParser
-from safetensors.torch import save_file as save_safetensors
+from safetensors.torch import safe_open, save_file as save_safetensors
 from src.t5            import T5Tokenizer, T5EncoderModel
 
-SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH    = os.path.join(SCRIPT_DIR, 't5xe.ini')
-CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, 't5xe.example.ini')
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_CHECK_TENSOR_PROMPT = """
 A ((photo)) of a [small] flying ((hovercraft:1.1) with a pilot inside),
@@ -58,17 +57,13 @@ and (an atmospheric color palette that emphasizes the Martian landscape)).
 
 #================================= HELPERS =================================#
 
-def fatal_error(message: str):
-    """Print an error message and exit the program with status 1."""
-    print(message)
-    sys.exit(1)
+def get_filename(path: str) -> str:
+    """Return the basename of the given file path."""
+    return os.path.basename(path)
 
-
-def filter_files(filepaths, extension):
-    """Filter filepaths list to include only files with the specified extension."""
-    extension = extension.lower()
-    return [filepath for filepath in filepaths if filepath.lower().endswith(extension)]
-
+def get_directory(path: str) -> str:
+    """Return the directory name of the given file path."""
+    return os.path.dirname(path)
 
 def get_unique_path(path: str) -> str:
     """Get a unique file path by adding incremental numbers if the file exists."""
@@ -84,7 +79,6 @@ def get_unique_path(path: str) -> str:
             return new_path
         counter += 1
 
-
 def change_extension(path: str, new_extension: str, overwrite: bool = True) -> str:
     """Return a new path string with the file extension changed."""
     base, ext = os.path.splitext(path)
@@ -93,8 +87,43 @@ def change_extension(path: str, new_extension: str, overwrite: bool = True) -> s
         new_path = get_unique_path(new_path)
     return new_path
 
+def fatal_error(message: str) -> None:
+    """Print an error message and exit the program with status 1."""
+    print(message)
+    sys.exit(1)
 
-def get_config_section(section_name:str):
+def filter_files(filepaths: list[str], extension: str) -> list[str]:
+    """Filter filepaths list to include only files with the specified extension."""
+    extension = extension.lower()
+    return [filepath for filepath in filepaths if filepath.lower().endswith(extension)]
+
+def load_safetensors(filepath: str) -> dict[str, torch.Tensor]:
+    """Load tensors from a SafeTensors file."""
+    tensors = {}
+    with safe_open(filepath, framework="pt", device="cpu") as f:
+        for key in f.keys():
+            tensors[key] = f.get_tensor(key)
+    return tensors
+
+def compare_tensors(file_tensors     : dict[str, torch.Tensor],
+                    generated_tensors: dict[str, torch.Tensor]
+                    ) -> None:
+    """Compare and print the similarity of tensors in two dictionaries."""
+    for key, generated_tensor in generated_tensors.items():
+        archived_tensor = file_tensors.get(key)
+        if archived_tensor is None:
+            print(f"Key '{key}' missing in stored tensors")
+        else:
+            similarity = torch.cosine_similarity(archived_tensor, generated_tensor, dim=1).mean()
+            print(f"Tensor '{key}' similarity = {similarity}")
+
+
+#============================ MAIN CONFIG FILE =============================#
+
+CONFIG_PATH    = os.path.join(SCRIPT_DIR, 't5xe.ini')
+CONFIG_EXAMPLE = os.path.join(SCRIPT_DIR, 't5xe.example.ini')
+
+def read_main_config(section_name:str) -> (dict, str):
     # primero se asegura que el archivo de configuracion exista
     if not os.path.exists(CONFIG_PATH):
         if not os.path.exists(CONFIG_EXAMPLE):
@@ -102,16 +131,16 @@ def get_config_section(section_name:str):
         shutil.copy(CONFIG_EXAMPLE, CONFIG_PATH)
 
     # obtiene el nombre del archivo de configuracion que sera mostrado al usuario
-    display_name = os.path.basename(CONFIG_PATH)
+    config_filename = os.path.basename(CONFIG_PATH)
 
     # intenta leer la seccion solicitada
     config = ConfigParser()
     config.read(CONFIG_PATH)
-    section = config[section_name] if section_name in config else None
-    if not section:
-        fatal_error(f"The configuration file '{display_name}' no contiene la sección [t5]")
+    config_section = config[section_name] if section_name in config else None
+    if not config_section:
+        fatal_error(f"The configuration file '{config_filename}' no contiene la sección ['{section_name}']")
 
-    return section, display_name
+    return config_section, config_filename
 
 
 #================================ METADATA =================================#
@@ -153,23 +182,23 @@ def load_metadata_from_safetensors(filepath  : str,
         raise IOError(f"Error opening or reading the file '{filename}'.")
 
 
-def load_metadata_from_ini_file(ini_file: str
+def load_metadata_from_ini_file(filepath: str
                                 ) -> dict:
     """
-    Load configuration from an INI file and convert it to metadata format.
+    Load image parameters from an INI file and convert it to metadata format.
 
     Args:
-        ini_file (str): Path to the INI file.
+        filepath (str): Path to the INI file.
 
     Returns:
-        dict: Dictionary containing the configuration as metadata.
+        dict: Dictionary containing the image parameters as metadata.
     Raises:
         ValueError: If there is an issue with the INI file format.
         IOError:    If there are issues opening or reading the file.
     """
     metadata = {}
     config = ConfigParser()
-    config.read(ini_file)
+    config.read(filepath)
     for section in config.sections():
         for key, value in config.items(section):
             if value.startswith("'"):
@@ -210,13 +239,42 @@ def save_metadata_to_ini_file(filepath: str,
     with open(filepath, 'w') as configfile:
         config.write(configfile)
 
+def generate_tensors_from_metadata(metadata, tokenizer, encoder):
+    tensors = {}
+
+    positive = metadata.get('prompt.positive', '')
+    negative = metadata.get('prompt.negative', '')
+    padding  = metadata.get('pt5tokenizer.padding', 'false')
+    padding  = padding.lower() in ('yes', 'true', 'y', '1')
+
+    if not positive and not negative:
+        return None
+
+    if padding:
+        tokens = tokenizer.tokenize_with_weights([positive,negative],
+                                                  padding=True,
+                                                  padding_max_size=300)
+        embeds, attn_mask = encoder.encode_with_weights(tokens,
+                                                        return_attn_mask=True
+                                                        )
+        tensors['prompt.positive']           = embeds[0]
+        tensors['prompt.positive_attn_mask'] = attn_mask[0]
+        tensors['prompt.negative']           = embeds[1]
+        tensors['prompt.negative_attn_mask'] = attn_mask[1]
+    else:
+        tokens = tokenizer.tokenize_with_weights([positive], padding=False)
+        tensors['prompt.positive'] = encoder.encode_with_weights(tokens)
+        tokens = tokenizer.tokenize_with_weights([negative], padding=False)
+        tensors['prompt.negative'] = encoder.encode_with_weights(tokens)
+
+    return tensors
 
 #===========================================================================#
 
 def initialize_encoder() -> (T5Tokenizer, T5EncoderModel):
     SECTION_NAME = 't5encoder'
     MODEL_PATH   = 'model_file'
-    config_section, config_name = get_config_section(SECTION_NAME)
+    config_section, config_filename = read_main_config(SECTION_NAME)
 
     # agregar todos los paths configurados en
     # model_file, model_file1, model_file2, model_file3, ...
@@ -231,10 +289,10 @@ def initialize_encoder() -> (T5Tokenizer, T5EncoderModel):
 
     # revisar que todo haya funcionado correctamente
     if not safetensors_paths:
-        fatal_error(f"Debe configurar correctamente the '{MODEL_PATH}' key in the '{SECTION_NAME}' section of '{config_name}'.")
+        fatal_error(f"Debe configurar correctamente the '{MODEL_PATH}' key in the '{SECTION_NAME}' section of '{config_filename}'.")
     for path in safetensors_paths:
         if not os.path.isfile(path):
-            fatal_error(f"El archivo {path} no existe, por favor revise la configuracion de '{MODEL_PATH}' in '{config_name}.")
+            fatal_error(f"El archivo {path} no existe, por favor revise la configuracion de '{MODEL_PATH}' in '{config_filename}.")
 
     # initializar y retornar tokenizer y encoder
     tokenizer = T5Tokenizer.from_pretrained(legacy=True)
@@ -242,25 +300,15 @@ def initialize_encoder() -> (T5Tokenizer, T5EncoderModel):
     return tokenizer, encoder
 
 
-def embeds_from_prompts(prompts  : list,
-                        tokenizer: T5Tokenizer,
-                        encoder  : T5EncoderModel):
-    tokens = tokenizer.tokenize_with_weights(prompts,
-                                             padding=False,
-                                             include_word_ids=False
-                                             )
-    return encoder.encode_with_weights(tokens)
-
-
 
 #================================ COMMANDS =================================#
 
-def generate_safetensors(ini_files: list[str] | str,
-                         tokenizer: T5Tokenizer,
-                         encoder  : T5EncoderModel,
-                         padding  : bool = False,
-                         overwrite: bool = False
-                         ) -> None:
+def generate_safetensors_files(ini_files: list[str] | str,
+                               tokenizer: T5Tokenizer,
+                               encoder  : T5EncoderModel,
+                               padding  : bool = False,
+                               overwrite: bool = False
+                               ) -> None:
     """
     Generate SafeTensors from INI files containing prompts.
 
@@ -277,33 +325,13 @@ def generate_safetensors(ini_files: list[str] | str,
 
     for ini_file in ini_files:
         metadata = load_metadata_from_ini_file(ini_file)
-        positive = metadata.get('prompt.positive', '')
-        negative = metadata.get('prompt.negative', '')
-
-        if not positive and not negative:
+        tensors  = generate_tensors_from_metadata(metadata)
+        if not tensors:
             print(f"El archivo {ini_files} fue skippeado porque no contiene ningun prompt")
             continue
 
-        tensors = {}
-        if padding:
-            tokens = tokenizer.tokenize_with_weights([positive,negative],
-                                                     padding=True,
-                                                     padding_max_size=300)
-            embeds, attn_mask = encoder.encode_with_weights(tokens,
-                                                            return_attn_mask=True
-                                                            )
-            tensors['prompt.positive']           = embeds[0]
-            tensors['prompt.positive_attn_mask'] = attn_mask[0]
-            tensors['prompt.negative']           = embeds[1]
-            tensors['prompt.negative_attn_mask'] = attn_mask[1]
-        else:
-            tokens = tokenizer.tokenize_with_weights([positive], padding=False)
-            tensors['prompt.positive'] = encoder.encode_with_weights(tokens)
-            tokens = tokenizer.tokenize_with_weights([negative], padding=False)
-            tensors['prompt.negative'] = encoder.encode_with_weights(tokens)
-
-        _, output_filename = os.path.split(ini_file)
-        output_filename    = change_extension(output_filename, '.safetensors', overwrite=overwrite)
+        output_filename = get_filename(ini_file)
+        output_filename = change_extension(output_filename, '.safetensors', overwrite=overwrite)
 
         print("## output_filename:", output_filename)
         print("## prompt.positive:", tensors['prompt.positive'].shape)
@@ -320,159 +348,43 @@ def recreate_inis_from_safetensors(safetensors_files: list[str] | str,
     for safetensors_file in safetensors_files:
 
         metadata = load_metadata_from_safetensors(safetensors_file)
-        _, ini_filename = os.path.split(safetensors_file)
-        ini_filename    = change_extension(ini_filename, '.ini', overwrite=overwrite)
+        ini_filename = get_filename(safetensors_file)
+        ini_filename = change_extension(ini_filename, '.ini', overwrite=overwrite)
         save_metadata_to_ini_file(ini_filename, metadata=metadata)
 
 
-def check_safetensors(safetensors_files: list[str] | str
+
+def check_safetensors(safetensors_files: list[str] | str,
+                      tokenizer: T5Tokenizer,
+                      encoder  : T5EncoderModel
                       ) -> None:
+    if isinstance(safetensors_files, str):
+        safetensors_files = [safetensors_files]
+
+    for safetensors_file in safetensors_files:
+        metadata = load_metadata_from_safetensors(safetensors_file)
+        file_tensors      = load_safetensors(safetensors_file)
+        generated_tensors = generate_tensors_from_metadata(metadata, tokenizer, encoder)
+        compare_tensors(file_tensors, generated_tensors)
+
+
+
     return None
 
 
-def internal_test() -> None:
-    print("No implementado todavia")
+def internal_test(tokenizer: T5Tokenizer,
+                  encoder  : T5EncoderModel
+                  ) -> None:
 
+    test_dir     = os.path.join(SCRIPT_DIR, 'test')
+    pattern      = os.path.join(test_dir, '*.prompt.safetensors')
+    prompt_files = glob(pattern)
 
+    if not prompt_files:
+        fatal_error("No '*.prompt.safetensors' files found in the 'test' directory. These files are required for the project.")
 
-def test_file(filepath : str,  # .safetensors file
-              tokenizer: T5Tokenizer,
-              encoder  : T5EncoderModel
-              ):
-    print(f"Testing file: {filepath}")
-    return None
+    check_safetensors(prompt_files, tokenizer, encoder)
 
-import pickle
-import gzip
-
-def compress_tensor(tensor_name: str,
-                    input_tokens,
-                    output_embeddings,
-                    encoder: T5EncoderModel
-                    ):
-
-    print("## compress_tensor (begin)")
-    tensor = encoder.state_dict().get(tensor_name)
-
-    # Serializar y comprimir el tensor
-    print("## converting to float16")
-    tensor = tensor.to(torch.float16)
-    print("## dumping")
-    tensor_bytes     = pickle.dumps(tensor)
-    print("## compressing")
-    compressed_bytes = gzip.compress(tensor_bytes)
-    print("## calculating percent")
-    percent          = len(compressed_bytes) * 100. / len(tensor_bytes)
-    print(f"Compress tensor {tensor_name}: {len(compressed_bytes)}/{len(tensor_bytes)} {percent}")
-    print("## compress_tensor (end)")
-
-    # Para descomprimir y deserializar el tensor
-    #decompressed_bytes = gzip.decompress(compressed_bytes)
-    #deserialized_tensor = pickle.loads(decompressed_bytes)
-
-
-
-def check_tensor(tensor_name: str,
-                 input_tokens,
-                 output_embeddings,
-                 encoder: T5EncoderModel
-                 ):
-    scale = 0.07
-    zero_point = 0
-
-    tensor = encoder.state_dict().get(tensor_name)
-    if tensor is None:
-        print(f"${tensor_name} no existe")
-        return
-
-    original_tensor = tensor.clone()
-    fp16_tensor   = original_tensor.to(torch.float16)
-    fp16_tensor   = fp16_tensor.to(torch.float32)
-    qui8_tensor   = torch.quantize_per_tensor(original_tensor, scale=scale, zero_point=zero_point, dtype=torch.quint8)
-    qui8_tensor   = qui8_tensor.dequantize()
-
-    tensor.copy_(fp16_tensor)
-    fp16_embeddings = encoder.encode_with_weights(input_tokens)[0]
-    assert fp16_embeddings.shape == output_embeddings.shape, f"no matchean las shapes, {fp16_embeddings.shape} vs {output_embeddings.shape}"
-    fp16_similarity = torch.cosine_similarity(fp16_embeddings, output_embeddings, dim=1).mean()
-    print(f"Similitud con tensor {tensor_name} en fp16: {fp16_similarity}")
-
-    # tensor.copy_(qui8_tensor)
-    # qui8_embeddings = encoder.encode_with_weights(input_tokens)[0]
-    # assert qui8_embeddings.shape == output_embeddings.shape, f"no matchean las shapes, {qui8_embeddings.shape} vs {output_embeddings.shape}"
-    # qui8_similarity = torch.cosine_similarity(qui8_embeddings, output_embeddings, dim=1).mean()
-    # print(f"Similitud con tensor {tensor_name} en qui8: {qui8_similarity}")
-    #
-    # # vuelve el tensor a la normalidad
-    # tensor.copy_(original_tensor)
-    # original_embeddings = encoder.encode_with_weights(input_tokens)[0]
-    # original_similarity = torch.cosine_similarity(original_embeddings, output_embeddings, dim=1).mean()
-    # print(f"Similitud con tensor {tensor_name} original: {original_similarity}")
-
-#
-#
-# def check_tensor(tensor_name: str,
-#                  input_tokens,
-#                  output_embeddings,
-#                  encoder: T5EncoderModel
-#                  ):
-#     tensor = encoder.state_dict().get(tensor_name)
-#     if tensor is None:
-#         print(f"${tensor_name} no existe")
-#         return
-#
-#     original_tensor = tensor.clone()
-#     zero_tensor     = torch.zeros_like(original_tensor)
-#     random_tensor   = torch.rand_like(original_tensor)
-#
-#     # reemplazar 'tensor_name' en el encoder con un tensor todo en cero
-#     tensor.copy_(zero_tensor)
-#
-#     # encodear 'input_tokens' y verificar que tanto se parece el resultado a output_embedings
-#    #zero_embeddings = encoder(input_tokens)[0]
-#     zero_embeddings = encoder.encode_with_weights(input_tokens)[0]
-#     assert zero_embeddings.shape == output_embeddings.shape, f"no matchean las shapes, {zero_embeddings.shape} vs {output_embeddings.shape}"
-#     zero_similarity = torch.cosine_similarity(zero_embeddings, output_embeddings, dim=1).mean()
-#     print(f"Similitud con tensor {tensor_name} en cero: {zero_similarity}")
-#
-#     # reemplazar 'tensor_name' en el encoder con un tensor todo random
-#     tensor.copy_(random_tensor)
-#
-#     # encodear 'input_tokens' y verificar que tanto se parece el resultado a output_embedings
-#    #random_embeddings = encoder(input_tokens)[0]
-#     random_embeddings = encoder.encode_with_weights(input_tokens)[0]
-#     assert random_embeddings.shape == output_embeddings.shape, f"no matchean las shapes, {random_embeddings.shape} vs {output_embeddings.shape}"
-#     random_similarity = torch.cosine_similarity(random_embeddings, output_embeddings, dim=1).mean()
-#     print(f"Similitud con tensor {tensor_name} aleatorio: {random_similarity}")
-#
-#     # vuelve el tensor a la normalidad
-#     tensor.copy_(original_tensor)
-#     original_embeddings = encoder.encode_with_weights(input_tokens)[0]
-#     original_similarity = torch.cosine_similarity(original_embeddings, output_embeddings, dim=1).mean()
-#     print(f"Similitud con tensor {tensor_name} original: {original_similarity}")
-
-
-def check_all_tensors(tokenizer: T5Tokenizer,
-                      encoder  : T5EncoderModel,
-                      prompt=None,
-                      tokens=None,
-                      embeddings=None ):
-
-    if not prompt:
-        prompt = DEFAULT_CHECK_TENSOR_PROMPT
-
-    # if tokens is None:
-    #     tokens = tokenizer.tokenize_with_weights([prompt],
-    #                                              padding=False)
-    #
-    # if embeddings is None:
-    #     embeddings = encoder.encode_with_weights(tokens)[0]
-
-    tensor_names = list(encoder.state_dict().keys())
-    for tensor_name in tensor_names:
-        #print(f"Verificando tensor: {tensor_name}")
-        compress_tensor(tensor_name, tokens, embeddings, encoder)
-        #print("-" * 50)
 
 #===========================================================================#
 #////////////////////////////////// MAIN ///////////////////////////////////#
@@ -493,27 +405,32 @@ def main():
     args = parser.parse_args()
 
     if args.test:
-        internal_test()
+        tokenizer, encoder = initialize_encoder()
+        internal_test(tokenizer, encoder)
         sys.exit(0)
 
     prompt_ini_files  = filter_files(args.files, 'prompt.ini')
     safetensors_files = filter_files(args.files, 'prompt.safetensors')
 
+    #------- CHECK SAFETENSORS -------#
     if args.check:
         if not safetensors_files:
             fatal_error("No '*.prompt.safetensors' files provided for validation.")
-        check_safetensors(safetensors_files)
+        tokenizer, encoder = initialize_encoder()
+        check_safetensors(safetensors_files, tokenizer, encoder)
         sys.exit(0)
 
+    #------ RECREATE INI FILES -------#
     if args.recreate_ini:
         if not safetensors_files:
             fatal_error("No '*.prompt.safetensors' files provided to recreate the '*.prompt.ini'.")
         recreate_inis_from_safetensors(safetensors_files)
         sys.exit(0)
 
+    #----- GENERATE SAFETENSORS ------#
     if not prompt_ini_files:
-        fatal_error("No 'prompt.ini' files provided for safetensors generation.")
-    generate_safetensors(prompt_ini_files)
+        fatal_error("No '*.prompt.ini' files provided for safetensors generation.")
+    generate_safetensors_files(prompt_ini_files)
 
 
 if __name__ == '__main__':
